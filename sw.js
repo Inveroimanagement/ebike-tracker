@@ -1,12 +1,13 @@
 /* Service worker: makes the app installable and work offline.
    Bump CACHE_VERSION whenever you change the app so phones pick up the new version. */
-const CACHE_VERSION = "ebike-v2";
+const CACHE_VERSION = "ebike-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  "./apple-touch-icon.png"
 ];
 
 // Pre-cache the app shell on install.
