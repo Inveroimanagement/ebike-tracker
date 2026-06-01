@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>E-Bike Rental Tracker — Limassol</title>
+<!-- PWA: makes the app installable to the home screen and work offline -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a2942">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="eBike Tracker">
 <!--
   ============================================================================
   E-BIKE RENTAL TRACKER  —  single-file offline web app
@@ -62,6 +69,8 @@
   header .spacer{flex:1}
   .topbtns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .backup-label{color:var(--muted);font-size:13px;font-weight:600}
+  #autoBackupBtn.on{background:rgba(63,185,80,.16);border-color:var(--green);color:var(--green)}
+  #autoBackupBtn.paused{background:rgba(210,153,34,.16);border-color:var(--amber);color:var(--amber)}
   /* On phones: stack the header and make the backup buttons big & obvious */
   @media(max-width:680px){
     header{flex-direction:column;align-items:stretch}
@@ -211,8 +220,9 @@
   </div>
   <span class="spacer"></span>
   <div class="topbtns">
-    <span class="backup-label">💾 Backup:</span>
-    <button class="btn primary" onclick="exportData()">⬇ Download backup</button>
+    <button class="btn primary" id="installBtn" style="display:none" onclick="installApp()">⬇ Install app</button>
+    <button class="btn" id="autoBackupBtn" onclick="toggleAutoBackup()">💾 Auto-backup: off</button>
+    <button class="btn" onclick="exportData()">⬇ Download backup</button>
     <button class="btn" onclick="document.getElementById('importFile').click()">⬆ Restore backup</button>
     <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importData(event)">
     <button class="btn danger" onclick="resetData()">Reset / Clear</button>
@@ -399,7 +409,7 @@ function toast(msg,type="ok"){
 /* ============================================================================
    PERSISTENCE
    ============================================================================ */
-function save(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+function save(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); scheduleAutoBackup(); }
 
 function load(){
   const raw = localStorage.getItem(DB_KEY);
@@ -1247,11 +1257,143 @@ function renderAll(){
   renderRentals(); renderIncome(); renderExpenses(); renderReports();
 }
 
+/* ============================================================================
+   PWA — install to home screen + offline service worker
+   ============================================================================ */
+let deferredInstall = null;
+// Register the service worker (only works over http/https, not file://).
+if("serviceWorker" in navigator && location.protocol.startsWith("http")){
+  window.addEventListener("load",()=>{ navigator.serviceWorker.register("sw.js").catch(e=>console.warn("SW failed",e)); });
+}
+// Chromium fires this when the app is installable → show our Install button.
+window.addEventListener("beforeinstallprompt",e=>{
+  e.preventDefault(); deferredInstall=e;
+  const b=$("installBtn"); if(b) b.style.display="";
+});
+window.addEventListener("appinstalled",()=>{ const b=$("installBtn"); if(b) b.style.display="none"; toast("App installed 🎉"); });
+function installApp(){
+  if(deferredInstall){ deferredInstall.prompt(); deferredInstall.userChoice.finally(()=>{deferredInstall=null;$("installBtn").style.display="none";}); }
+  else {
+    // iPhone/Safari has no install prompt API — guide the user instead.
+    openModal("Add to Home Screen",
+      `<p>To install this as an app:</p>
+       <p><b>iPhone (Safari):</b> tap the <b>Share</b> icon → <b>Add to Home Screen</b>.</p>
+       <p><b>Android (Chrome):</b> tap the <b>⋮</b> menu → <b>Add to Home screen / Install app</b>.</p>
+       <p><b>PC:</b> look for the <b>install icon</b> in the address bar.</p>`,
+      [{label:"Got it",cls:"btn primary",fn:closeModal}]);
+  }
+}
+
+/* ============================================================================
+   AUTOMATIC BACKUP TO A FILE  (desktop Chromium / Opera GX via File System
+   Access API). On every change the chosen .json file is silently rewritten.
+   Phones/Safari don't support silent file writing → the button explains that.
+   ============================================================================ */
+const FS_SUPPORTED = ("showSaveFilePicker" in window);
+let backupHandle = null;     // FileSystemFileHandle for the backup file
+let backupBusy = false, backupQueued = false;
+
+// --- tiny IndexedDB helper to remember the file handle between sessions ---
+function idb(){ return new Promise((res,rej)=>{
+  const r=indexedDB.open("ebike_meta",1);
+  r.onupgradeneeded=()=>r.result.createObjectStore("kv");
+  r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+});}
+async function idbSet(k,v){ const d=await idb(); return new Promise((res,rej)=>{const t=d.transaction("kv","readwrite");t.objectStore("kv").put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error);}); }
+async function idbGet(k){ const d=await idb(); return new Promise((res,rej)=>{const t=d.transaction("kv","readonly");const q=t.objectStore("kv").get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);}); }
+async function idbDel(k){ const d=await idb(); return new Promise((res)=>{const t=d.transaction("kv","readwrite");t.objectStore("kv").delete(k);t.oncomplete=res;}); }
+
+// User clicks the auto-backup button.
+async function toggleAutoBackup(){
+  if(!FS_SUPPORTED){
+    openModal("Auto-backup",
+      `<p>Automatic backup to a file works on a <b>computer</b> (Chrome / Edge / Opera GX).</p>
+       <p>This device/browser (likely a phone or Safari) doesn't allow apps to write files silently, so here your data still <b>saves automatically on the device</b> — just tap <b>⬇ Download backup</b> now and then to keep a copy (ideally in OneDrive).</p>`,
+      [{label:"OK",cls:"btn primary",fn:closeModal}]);
+    return;
+  }
+  if(backupHandle){
+    const perm = await backupHandle.queryPermission({mode:"readwrite"});
+    if(perm!=="granted"){   // paused → resume by re-granting permission
+      if(await ensurePermission()){ await writeBackupNow(); toast("Auto-backup resumed"); }
+      else { updateBackupBtn(true); toast("Permission denied — still paused","err"); }
+      return;
+    }
+    // currently ON and granted → turn off
+    backupHandle=null; await idbDel("backupHandle"); updateBackupBtn(); toast("Auto-backup turned off");
+    return;
+  }
+  try{
+    backupHandle = await window.showSaveFilePicker({
+      suggestedName:"ebike-autobackup.json",
+      types:[{description:"JSON backup",accept:{"application/json":[".json"]}}]
+    });
+    await idbSet("backupHandle", backupHandle);
+    await writeBackupNow();
+    updateBackupBtn();
+    toast("Auto-backup ON — saves on every change");
+  }catch(e){ /* user cancelled the picker */ }
+}
+
+// Re-attach a saved handle on startup (permission must be re-granted with a click).
+async function restoreAutoBackup(){
+  if(!FS_SUPPORTED) { updateBackupBtn(); return; }
+  try{
+    const h = await idbGet("backupHandle");
+    if(!h){ updateBackupBtn(); return; }
+    backupHandle = h;
+    const perm = await h.queryPermission({mode:"readwrite"});
+    updateBackupBtn(perm!=="granted");   // show "paused" if we must re-ask
+  }catch(e){ updateBackupBtn(); }
+}
+
+// Verify/request write permission (needs a user gesture the first time per session).
+async function ensurePermission(){
+  if(!backupHandle) return false;
+  if(await backupHandle.queryPermission({mode:"readwrite"})==="granted") return true;
+  try{ return (await backupHandle.requestPermission({mode:"readwrite"}))==="granted"; }
+  catch(e){ return false; }
+}
+
+// Debounced writer triggered from save(); coalesces rapid changes.
+function scheduleAutoBackup(){
+  if(!backupHandle) return;
+  if(backupBusy){ backupQueued=true; return; }
+  writeBackupNow();
+}
+async function writeBackupNow(){
+  if(!backupHandle) return;
+  backupBusy=true;
+  try{
+    if(!(await ensurePermission())){ updateBackupBtn(true); backupBusy=false; return; }
+    const w = await backupHandle.createWritable();
+    await w.write(JSON.stringify(db,null,2));
+    await w.close();
+    db.meta = db.meta||{}; db.meta.lastBackup = new Date().toISOString();
+    updateBackupBtn();
+  }catch(e){ console.warn("Auto-backup write failed",e); updateBackupBtn(true); }
+  backupBusy=false;
+  if(backupQueued){ backupQueued=false; scheduleAutoBackup(); }   // flush queued change
+}
+
+// Reflect state on the button.
+function updateBackupBtn(paused){
+  const b=$("autoBackupBtn"); if(!b) return;
+  if(!FS_SUPPORTED){ b.textContent="💾 Backup"; b.className="btn"; b.title="Tap for backup help"; return; }
+  if(backupHandle && paused){ b.textContent="⏸ Resume auto-backup"; b.className="btn paused";
+    b.title="Click to re-grant permission and resume writing the backup file"; }
+  else if(backupHandle){ const n=backupHandle.name||"file"; b.textContent="✅ Auto-backup: ON"; b.className="btn on";
+    b.title="Saving to "+n+" on every change"; }
+  else { b.textContent="💾 Auto-backup: off"; b.className="btn";
+    b.title="Click to pick a backup file that updates automatically"; }
+}
+
 // boot
 load();
 initSelectors();
 renderDashboard();
 if(!hasCharts) $("noChartNote").style.display="block";
+restoreAutoBackup();
 </script>
 </body>
 </html>
