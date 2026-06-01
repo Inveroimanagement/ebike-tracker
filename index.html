@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E-Bike Rental Tracker — Limassol</title>
+<!--
+  ============================================================================
+  E-BIKE RENTAL TRACKER  —  single-file offline web app
+  ============================================================================
+  Everything (HTML + CSS + JS) lives in this one file. No server, no build.
+  Data is stored in the browser's localStorage under the key DB_KEY (below).
+
+  HOW TO TWEAK LABELS / CATEGORIES LATER:
+    - Income categories ........ see INCOME_CATEGORIES array
+    - Expense categories ....... see EXPENSE_CATEGORIES array
+    - Bike statuses ............ see BIKE_STATUSES array
+    - Rate periods ............. see RATE_PERIODS array
+    - Currency / locale ........ see CURRENCY / LOCALE constants
+    - Sample seed data ......... see seedData()
+  ============================================================================
+-->
+<style>
+  /* ---------- Theme tokens ---------- */
+  :root{
+    --bg:#0f1419;
+    --panel:#1a2230;
+    --panel-2:#222c3d;
+    --border:#2d3a4f;
+    --text:#e6edf3;
+    --muted:#8b9bb0;
+    --accent:#3ea6ff;
+    --accent-2:#2d7fd6;
+    --green:#3fb950;
+    --red:#f85149;
+    --amber:#d29922;
+    --shadow:0 6px 24px rgba(0,0,0,.35);
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{margin:0 0 .5em;font-weight:600}
+  a{color:var(--accent);text-decoration:none}
+  button{font-family:inherit;font-size:14px;cursor:pointer}
+
+  /* ---------- Layout ---------- */
+  header{
+    background:linear-gradient(135deg,#16202e,#1a2942);
+    border-bottom:1px solid var(--border);
+    padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  }
+  header .logo{font-size:22px}
+  header h1{font-size:18px;margin:0}
+  header .sub{color:var(--muted);font-size:12px}
+  header .spacer{flex:1}
+  .topbtns{display:flex;gap:8px;flex-wrap:wrap}
+
+  nav.tabs{
+    display:flex;gap:2px;background:var(--panel);border-bottom:1px solid var(--border);
+    padding:0 8px;overflow-x:auto;
+  }
+  nav.tabs button{
+    background:transparent;border:none;color:var(--muted);
+    padding:12px 16px;border-bottom:3px solid transparent;white-space:nowrap;
+    font-weight:500;transition:.15s;
+  }
+  nav.tabs button:hover{color:var(--text)}
+  nav.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+  main{padding:20px;max-width:1200px;margin:0 auto}
+  .tabview{display:none}
+  .tabview.active{display:block;animation:fade .2s}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+    padding:8px 14px;border-radius:8px;transition:.15s;
+  }
+  .btn:hover{background:#2b3850}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:600}
+  .btn.primary:hover{background:var(--accent-2)}
+  .btn.danger{background:transparent;border-color:var(--red);color:var(--red)}
+  .btn.danger:hover{background:rgba(248,81,73,.12)}
+  .btn.small{padding:5px 10px;font-size:13px}
+  .btn.ghost{background:transparent}
+  .btn.ghost:hover{background:var(--panel-2)}
+
+  /* ---------- Cards / stats ---------- */
+  .grid{display:grid;gap:16px}
+  .stats{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:20px}
+  .stat{
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;box-shadow:var(--shadow);
+  }
+  .stat .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .stat .value{font-size:26px;font-weight:700;margin-top:6px}
+  .value.pos{color:var(--green)} .value.neg{color:var(--red)}
+
+  .card{
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px;box-shadow:var(--shadow);margin-bottom:20px;
+  }
+  .card h2{font-size:16px;display:flex;align-items:center;gap:8px}
+  .charts{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .chart-wrap{position:relative;height:280px}
+
+  /* ---------- Tables ---------- */
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .toolbar .spacer{flex:1}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;
+     position:sticky;top:0;background:var(--panel)}
+  tbody tr:hover{background:var(--panel-2)}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .table-scroll{overflow-x:auto}
+  .clickable{cursor:pointer}
+  .clickable:hover td:first-child{color:var(--accent)}
+
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+  .badge.available{background:rgba(63,185,80,.15);color:var(--green)}
+  .badge.rented{background:rgba(62,166,255,.15);color:var(--accent)}
+  .badge.maintenance{background:rgba(210,153,34,.18);color:var(--amber)}
+  .badge.retired{background:rgba(139,155,176,.15);color:var(--muted)}
+  .badge.active{background:rgba(63,185,80,.15);color:var(--green)}
+  .badge.ended{background:rgba(139,155,176,.15);color:var(--muted)}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+
+  .empty{text-align:center;padding:40px 20px;color:var(--muted)}
+  .empty .big{font-size:40px;margin-bottom:8px;opacity:.5}
+
+  /* ---------- Forms / modal ---------- */
+  .modal-back{
+    position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
+    align-items:flex-start;justify-content:center;padding:40px 16px;z-index:100;overflow-y:auto;
+  }
+  .modal-back.show{display:flex}
+  .modal{
+    background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+    width:100%;max-width:560px;box-shadow:var(--shadow);
+  }
+  .modal header{background:none;border:none;border-bottom:1px solid var(--border);
+    padding:16px 20px;display:flex;align-items:center}
+  .modal header h3{margin:0;font-size:17px}
+  .modal .body{padding:20px;max-height:65vh;overflow-y:auto}
+  .modal .foot{padding:14px 20px;border-top:1px solid var(--border);
+    display:flex;justify-content:flex-end;gap:10px}
+  .modal .x{margin-left:auto;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer}
+
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
+  .field input,.field select,.field textarea{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:9px 11px;border-radius:8px;font-size:14px;font-family:inherit;
+  }
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
+  .field textarea{resize:vertical;min-height:60px}
+  .field .err{color:var(--red);font-size:12px;margin-top:4px;display:none}
+  .field.invalid .err{display:block}
+  .field.invalid input,.field.invalid select{border-color:var(--red)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:520px){.row2{grid-template-columns:1fr}}
+
+  /* filters inline */
+  .filt{display:flex;flex-direction:column;gap:3px}
+  .filt label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  .filt input,.filt select{
+    background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:7px 9px;border-radius:7px;font-size:13px;font-family:inherit;
+  }
+
+  /* toast */
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);
+    background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+    padding:12px 20px;border-radius:10px;box-shadow:var(--shadow);transition:.3s;z-index:200;opacity:0}
+  #toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+  #toast.ok{border-color:var(--green)} #toast.err{border-color:var(--red)}
+
+  .hint{color:var(--muted);font-size:13px}
+  .detail-section{margin-top:18px}
+  .detail-section h3{font-size:14px;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:6px}
+  .mini-stats{display:flex;gap:24px;flex-wrap:wrap;margin:10px 0 4px}
+  .mini-stats div{font-size:13px}
+  .mini-stats b{display:block;font-size:18px}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">🚲</span>
+  <div>
+    <h1>E-Bike Rental Tracker</h1>
+    <div class="sub">Limassol · Cyprus — offline finance tracker</div>
+  </div>
+  <span class="spacer"></span>
+  <div class="topbtns">
+    <button class="btn" onclick="exportData()">⬇ Export backup</button>
+    <button class="btn" onclick="document.getElementById('importFile').click()">⬆ Import backup</button>
+    <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importData(event)">
+    <button class="btn danger" onclick="resetData()">Reset / Clear</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabnav">
+  <button data-tab="dashboard" class="active">📊 Dashboard</button>
+  <button data-tab="bicycles">🚲 Bicycles</button>
+  <button data-tab="tenants">👤 Tenants</button>
+  <button data-tab="rentals">📅 Rentals</button>
+  <button data-tab="income">💶 Income</button>
+  <button data-tab="expenses">🧾 Expenses</button>
+  <button data-tab="reports">📑 Reports</button>
+</nav>
+
+<main>
+  <!-- ===================== DASHBOARD ===================== -->
+  <section class="tabview active" id="tab-dashboard">
+    <div class="toolbar">
+      <div class="filt"><label>Month</label>
+        <select id="dashMonth" onchange="renderDashboard()"></select></div>
+      <div class="filt"><label>Year</label>
+        <select id="dashYear" onchange="renderDashboard()"></select></div>
+      <button class="btn small ghost" onclick="document.getElementById('dashMonth').value='';document.getElementById('dashYear').value='';renderDashboard()">Clear filter</button>
+    </div>
+    <div class="grid stats" id="dashStats"></div>
+    <div class="grid charts">
+      <div class="card"><h2>Monthly income vs expenses</h2><div class="chart-wrap"><canvas id="chartMonthly"></canvas></div></div>
+      <div class="card"><h2>Expense breakdown</h2><div class="chart-wrap"><canvas id="chartExpense"></canvas></div></div>
+      <div class="card"><h2>Net profit per bike</h2><div class="chart-wrap"><canvas id="chartPerBike"></canvas></div></div>
+    </div>
+    <div id="noChartNote" class="hint" style="display:none">📡 Charts unavailable (Chart.js CDN didn't load — you're probably offline). All data &amp; numbers still work.</div>
+  </section>
+
+  <!-- ===================== BICYCLES ===================== -->
+  <section class="tabview" id="tab-bicycles">
+    <div class="toolbar">
+      <h2 style="margin:0">Bicycles</h2><span class="spacer"></span>
+      <button class="btn primary" onclick="openBikeModal()">+ Add bike</button>
+    </div>
+    <div class="card"><div class="table-scroll"><table id="bikeTable"></table></div></div>
+  </section>
+
+  <!-- ===================== TENANTS ===================== -->
+  <section class="tabview" id="tab-tenants">
+    <div class="toolbar">
+      <h2 style="margin:0">Tenants</h2><span class="spacer"></span>
+      <button class="btn primary" onclick="openTenantModal()">+ Add tenant</button>
+    </div>
+    <div class="card"><div class="table-scroll"><table id="tenantTable"></table></div></div>
+  </section>
+
+  <!-- ===================== RENTALS ===================== -->
+  <section class="tabview" id="tab-rentals">
+    <div class="toolbar">
+      <h2 style="margin:0">Rentals</h2><span class="spacer"></span>
+      <button class="btn primary" onclick="openRentalModal()">+ New rental</button>
+    </div>
+    <div class="card"><h2>Active rentals</h2><div class="table-scroll"><table id="rentalActiveTable"></table></div></div>
+    <div class="card"><h2>Ended rentals</h2><div class="table-scroll"><table id="rentalEndedTable"></table></div></div>
+  </section>
+
+  <!-- ===================== INCOME ===================== -->
+  <section class="tabview" id="tab-income">
+    <div class="toolbar">
+      <div class="filt"><label>From</label><input type="date" id="incFrom" onchange="renderIncome()"></div>
+      <div class="filt"><label>To</label><input type="date" id="incTo" onchange="renderIncome()"></div>
+      <div class="filt"><label>Bike</label><select id="incBike" onchange="renderIncome()"></select></div>
+      <div class="filt"><label>Tenant</label><select id="incTenant" onchange="renderIncome()"></select></div>
+      <div class="filt"><label>Category</label><select id="incCat" onchange="renderIncome()"></select></div>
+      <span class="spacer"></span>
+      <button class="btn small ghost" onclick="clearIncomeFilters()">Clear</button>
+      <button class="btn primary" onclick="openIncomeModal()">+ Add income</button>
+    </div>
+    <div class="card"><div class="table-scroll"><table id="incomeTable"></table></div></div>
+  </section>
+
+  <!-- ===================== EXPENSES ===================== -->
+  <section class="tabview" id="tab-expenses">
+    <div class="toolbar">
+      <div class="filt"><label>From</label><input type="date" id="expFrom" onchange="renderExpenses()"></div>
+      <div class="filt"><label>To</label><input type="date" id="expTo" onchange="renderExpenses()"></div>
+      <div class="filt"><label>Bike</label><select id="expBike" onchange="renderExpenses()"></select></div>
+      <div class="filt"><label>Category</label><select id="expCat" onchange="renderExpenses()"></select></div>
+      <span class="spacer"></span>
+      <button class="btn small ghost" onclick="clearExpenseFilters()">Clear</button>
+      <button class="btn primary" onclick="openExpenseModal()">+ Add expense</button>
+    </div>
+    <div class="card"><div class="table-scroll"><table id="expenseTable"></table></div></div>
+  </section>
+
+  <!-- ===================== REPORTS ===================== -->
+  <section class="tabview" id="tab-reports">
+    <div class="toolbar">
+      <div class="filt"><label>Month</label><select id="repMonth" onchange="renderReports()"></select></div>
+      <div class="filt"><label>Year</label><select id="repYear" onchange="renderReports()"></select></div>
+      <button class="btn small ghost" onclick="document.getElementById('repMonth').value='';document.getElementById('repYear').value='';renderReports()">Clear filter</button>
+    </div>
+    <div class="grid stats" id="repStats"></div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">Profit per bike</h2><span class="spacer"></span>
+        <button class="btn small" onclick="exportReportCSV('bike')">⬇ Export CSV</button></div>
+      <div class="table-scroll"><table id="repBikeTable"></table></div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">Profit per tenant</h2><span class="spacer"></span>
+        <button class="btn small" onclick="exportReportCSV('tenant')">⬇ Export CSV</button></div>
+      <div class="table-scroll"><table id="repTenantTable"></table></div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><h2 style="margin:0">Monthly P&amp;L (selected year)</h2><span class="spacer"></span>
+        <button class="btn small" onclick="exportReportCSV('monthly')">⬇ Export CSV</button></div>
+      <div class="table-scroll"><table id="repMonthlyTable"></table></div>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== GENERIC MODAL ===================== -->
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <header><h3 id="modalTitle">Title</h3><button class="x" onclick="closeModal()">&times;</button></header>
+    <div class="body" id="modalBody"></div>
+    <div class="foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+/* ============================================================================
+   CONFIG / CONSTANTS  — tweak these freely
+   ============================================================================ */
+const DB_KEY = "ebike_rental_db_v1";
+const CURRENCY = "EUR";
+const LOCALE = "el-CY";              // Cyprus locale → € formatting, DD/MM/YYYY-ish
+const INCOME_CATEGORIES  = ["Rental payment","Deposit received","Other"];
+const EXPENSE_CATEGORIES = ["Maintenance","Spare parts","Insurance","Purchase","Charging/electricity","Other"];
+const BIKE_STATUSES      = ["Available","Rented","In maintenance","Retired"];
+const RATE_PERIODS       = ["Daily","Weekly","Monthly"];
+const MONTH_NAMES = ["January","February","March","April","May","June",
+                     "July","August","September","October","November","December"];
+
+/* ============================================================================
+   STATE
+   ============================================================================ */
+let db = null;            // the whole database object
+let charts = {};          // live Chart.js instances
+const hasCharts = typeof Chart !== "undefined";
+
+/* ============================================================================
+   UTILITIES
+   ============================================================================ */
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+function money(n){
+  const v = Number(n)||0;
+  return new Intl.NumberFormat(LOCALE,{style:"currency",currency:CURRENCY}).format(v);
+}
+// ISO (yyyy-mm-dd, stored) -> DD/MM/YYYY (displayed)
+function fmtDate(iso){
+  if(!iso) return "—";
+  const [y,m,d] = iso.split("-");
+  if(!y||!m||!d) return iso;
+  return `${d}/${m}/${y}`;
+}
+function todayISO(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function monthOf(iso){ return iso ? Number(iso.split("-")[1]) : null; }
+function yearOf(iso){ return iso ? Number(iso.split("-")[0]) : null; }
+function esc(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function num(v){ const n = Number(v); return isFinite(n)?n:0; }
+function clsAmt(n){ return n>0?"pos":(n<0?"neg":""); }
+
+function toast(msg,type="ok"){
+  const t=$("toast"); t.textContent=msg; t.className="show "+type;
+  setTimeout(()=>t.className="",2600);
+}
+
+/* ============================================================================
+   PERSISTENCE
+   ============================================================================ */
+function save(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+function load(){
+  const raw = localStorage.getItem(DB_KEY);
+  if(raw){
+    try{ db = JSON.parse(raw); normalizeDb(); return; }
+    catch(e){ console.error("Corrupt DB, reseeding",e); }
+  }
+  db = seedData();
+  save();
+}
+// make sure all arrays exist even if an older/partial file was imported
+function normalizeDb(){
+  db = db || {};
+  ["bikes","tenants","rentals","income","expenses"].forEach(k=>{ if(!Array.isArray(db[k])) db[k]=[]; });
+}
+
+/* ============================================================================
+   SEED DATA  (first run sample so the app isn't empty)
+   ============================================================================ */
+function seedData(){
+  const b1=uid(), b2=uid(), t1=uid(), t2=uid(), r1=uid(), r2=uid();
+  return {
+    meta:{created:todayISO(), app:"ebike-rental-tracker"},
+    bikes:[
+      {id:b1,name:"Bike #1 — Blue Xiaomi",model:"Xiaomi HIMO C26",serial:"XM-0001",
+       purchaseDate:"2025-01-15",purchaseCost:780,status:"Rented",notes:"Sample bike"},
+      {id:b2,name:"Bike #2 — Black Engwe",model:"Engwe EP-2 Pro",serial:"EN-0042",
+       purchaseDate:"2025-02-10",purchaseCost:1100,status:"Available",notes:"Sample bike"},
+    ],
+    tenants:[
+      {id:t1,name:"Andreas Georgiou",phone:"+357 99 123456",email:"andreas@example.cy",
+       idref:"K123456",active:true,notes:"Sample tenant"},
+      {id:t2,name:"Maria Christodoulou",phone:"+357 96 654321",email:"maria@example.cy",
+       idref:"L987654",active:true,notes:"Sample tenant"},
+    ],
+    rentals:[
+      {id:r1,bikeId:b1,tenantId:t1,start:"2025-03-01",end:"",
+       rate:40,period:"Weekly",deposit:100,notes:"Ongoing weekly rental"},
+      {id:r2,bikeId:b2,tenantId:t2,start:"2025-02-15",end:"2025-03-15",
+       rate:120,period:"Monthly",deposit:150,notes:"One month, returned"},
+    ],
+    income:[
+      {id:uid(),date:"2025-03-01",amount:100,category:"Deposit received",bikeId:b1,tenantId:t1,rentalId:r1,notes:"Deposit"},
+      {id:uid(),date:"2025-03-08",amount:40,category:"Rental payment",bikeId:b1,tenantId:t1,rentalId:r1,notes:"Week 1"},
+      {id:uid(),date:"2025-03-15",amount:40,category:"Rental payment",bikeId:b1,tenantId:t1,rentalId:r1,notes:"Week 2"},
+      {id:uid(),date:"2025-02-15",amount:150,category:"Deposit received",bikeId:b2,tenantId:t2,rentalId:r2,notes:"Deposit"},
+      {id:uid(),date:"2025-03-15",amount:120,category:"Rental payment",bikeId:b2,tenantId:t2,rentalId:r2,notes:"Month"},
+    ],
+    expenses:[
+      {id:uid(),date:"2025-03-05",amount:25,category:"Maintenance",bikeId:b1,notes:"Brake adjustment"},
+      {id:uid(),date:"2025-03-10",amount:15,category:"Charging/electricity",bikeId:b1,notes:"Charging"},
+      {id:uid(),date:"2025-02-20",amount:60,category:"Spare parts",bikeId:b2,notes:"New tube + tyre"},
+    ],
+  };
+}
+
+/* ============================================================================
+   LOOKUP HELPERS
+   ============================================================================ */
+const bikeById   = id => db.bikes.find(b=>b.id===id);
+const tenantById = id => db.tenants.find(t=>t.id===id);
+const bikeName   = id => { const b=bikeById(id); return b?b.name:"—"; };
+const tenantName = id => { const t=tenantById(id); return t?t.name:"—"; };
+
+/* date filter: returns true if iso date is within [from,to] (either may be blank) */
+function inRange(iso,from,to){
+  if(!iso) return false;
+  if(from && iso<from) return false;
+  if(to && iso>to) return false;
+  return true;
+}
+/* month/year filter for dashboard & reports (month/year may be "" = any) */
+function matchPeriod(iso,month,year){
+  if(!iso) return false;
+  if(year && yearOf(iso)!==Number(year)) return false;
+  if(month && monthOf(iso)!==Number(month)) return false;
+  return true;
+}
+
+/* ============================================================================
+   CALCULATIONS
+   ============================================================================ */
+// totals over arrays, optionally filtered by month/year
+function totalIncome(filterFn){ return db.income.filter(filterFn||(()=>true)).reduce((s,e)=>s+num(e.amount),0); }
+function totalExpenses(filterFn){ return db.expenses.filter(filterFn||(()=>true)).reduce((s,e)=>s+num(e.amount),0); }
+
+// Net profit per bike = income(bike) − expenses(bike) − purchase cost.
+// `pf` (period filter) optional, applies to income & expense dates.
+function bikeFinance(bikeId, pf){
+  pf = pf || (()=>true);
+  const inc = db.income.filter(e=>e.bikeId===bikeId && pf(e.date)).reduce((s,e)=>s+num(e.amount),0);
+  let exp = db.expenses.filter(e=>e.bikeId===bikeId && pf(e.date)).reduce((s,e)=>s+num(e.amount),0);
+  // purchase cost counts as an expense for the bike (only if its purchase date is in range)
+  const bk = bikeById(bikeId);
+  const purchase = (bk && pf(bk.purchaseDate)) ? num(bk.purchaseCost) : 0;
+  exp += purchase;
+  return {income:inc, expenses:exp, purchase, net:inc-exp};
+}
+
+// Net per tenant = income(tenant) − expenses(tenant)
+function tenantFinance(tenantId, pf){
+  pf = pf || (()=>true);
+  const inc = db.income.filter(e=>e.tenantId===tenantId && pf(e.date)).reduce((s,e)=>s+num(e.amount),0);
+  const exp = db.expenses.filter(e=>e.tenantId===tenantId && pf(e.date)).reduce((s,e)=>s+num(e.amount),0);
+  return {income:inc, expenses:exp, net:inc-exp};
+}
+
+/* ============================================================================
+   NAV / TABS
+   ============================================================================ */
+$("tabnav").addEventListener("click",e=>{
+  const btn=e.target.closest("button"); if(!btn) return;
+  document.querySelectorAll("#tabnav button").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  const tab=btn.dataset.tab;
+  document.querySelectorAll(".tabview").forEach(v=>v.classList.remove("active"));
+  $("tab-"+tab).classList.add("active");
+  renderTab(tab);
+});
+
+function renderTab(tab){
+  switch(tab){
+    case "dashboard": renderDashboard(); break;
+    case "bicycles":  renderBikes(); break;
+    case "tenants":   renderTenants(); break;
+    case "rentals":   renderRentals(); break;
+    case "income":    renderIncome(); break;
+    case "expenses":  renderExpenses(); break;
+    case "reports":   renderReports(); break;
+  }
+}
+
+/* ============================================================================
+   DASHBOARD
+   ============================================================================ */
+function renderDashboard(){
+  const m=$("dashMonth").value, y=$("dashYear").value;
+  const pf = iso => matchPeriod(iso,m,y);
+
+  const inc = totalIncome(e=>pf(e.date));
+  const exp = totalExpenses(e=>pf(e.date));
+  const net = inc-exp;
+  const activeRentals = db.rentals.filter(r=>!r.end).length;
+
+  $("dashStats").innerHTML = `
+    ${statCard("Total income", money(inc),"pos")}
+    ${statCard("Total expenses", money(exp),"neg")}
+    ${statCard("Net profit", money(net), net>=0?"pos":"neg")}
+    ${statCard("Bikes", db.bikes.length)}
+    ${statCard("Active rentals", activeRentals)}
+  `;
+  drawCharts(m,y);
+}
+function statCard(label,value,cls=""){
+  return `<div class="stat"><div class="label">${esc(label)}</div><div class="value ${cls}">${esc(value)}</div></div>`;
+}
+
+function drawCharts(m,y){
+  if(!hasCharts){ $("noChartNote").style.display="block"; return; }
+  Object.values(charts).forEach(c=>{try{c.destroy()}catch(e){}});
+  charts={};
+  const txt="#e6edf3", grid="rgba(255,255,255,.07)";
+  Chart.defaults.color=txt; Chart.defaults.borderColor=grid;
+
+  // ---- Monthly income vs expenses (for selected year, or all years aggregated by month) ----
+  const months = Array.from({length:12},(_,i)=>i+1);
+  const yFilter = e => (!y || yearOf(e.date)===Number(y));
+  const incByM = months.map(mm=>db.income.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0));
+  const expByM = months.map(mm=>db.expenses.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0));
+  charts.monthly=new Chart($("chartMonthly"),{type:"bar",data:{
+    labels:MONTH_NAMES.map(n=>n.slice(0,3)),
+    datasets:[
+      {label:"Income",data:incByM,backgroundColor:"#3fb950"},
+      {label:"Expenses",data:expByM,backgroundColor:"#f85149"}]},
+    options:chartOpts()});
+
+  // ---- Expense breakdown (respects month+year filter) ----
+  const pf = iso => matchPeriod(iso,m,y);
+  const byCat={};
+  db.expenses.filter(e=>pf(e.date)).forEach(e=>{byCat[e.category]=(byCat[e.category]||0)+num(e.amount)});
+  const catLabels=Object.keys(byCat), catData=catLabels.map(k=>byCat[k]);
+  charts.expense=new Chart($("chartExpense"),{type:"doughnut",data:{
+    labels:catLabels.length?catLabels:["No expenses"],
+    datasets:[{data:catData.length?catData:[1],
+      backgroundColor:["#3ea6ff","#f85149","#d29922","#3fb950","#a371f7","#8b9bb0","#ff7b72"]}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"}}}});
+
+  // ---- Net profit per bike (respects filter) ----
+  const bl=db.bikes.map(b=>b.name), bd=db.bikes.map(b=>bikeFinance(b.id,pf).net);
+  charts.perbike=new Chart($("chartPerBike"),{type:"bar",data:{
+    labels:bl.length?bl:["No bikes"],
+    datasets:[{label:"Net profit",data:bd.length?bd:[0],
+      backgroundColor:bd.map(v=>v>=0?"#3fb950":"#f85149")}]},
+    options:chartOpts()});
+}
+function chartOpts(){
+  return {responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{position:"bottom"}},
+    scales:{y:{beginAtZero:true,ticks:{callback:v=>"€"+v}}}};
+}
+
+/* ============================================================================
+   BICYCLES TAB
+   ============================================================================ */
+function renderBikes(){
+  const t=$("bikeTable");
+  if(!db.bikes.length){ t.innerHTML=emptyRow("🚲","No bikes yet.","Click “+ Add bike” to register your first e-bike."); return; }
+  let rows=db.bikes.map(b=>{
+    const f=bikeFinance(b.id);
+    const st=b.status.toLowerCase().includes("maint")?"maintenance":b.status.toLowerCase().replace(/[^a-z]/g,"");
+    return `<tr class="clickable" onclick="showBikeDetail('${b.id}')">
+      <td><b>${esc(b.name)}</b><div class="hint">${esc(b.model||"")}</div></td>
+      <td><span class="badge ${st}">${esc(b.status)}</span></td>
+      <td>${fmtDate(b.purchaseDate)}</td>
+      <td class="num">${money(b.purchaseCost)}</td>
+      <td class="num pos">${money(f.income)}</td>
+      <td class="num neg">${money(f.expenses)}</td>
+      <td class="num ${clsAmt(f.net)}"><b>${money(f.net)}</b></td>
+      <td class="num">${actionBtns(`openBikeModal('${b.id}')`,`delBike('${b.id}')`)}</td>
+    </tr>`;
+  }).join("");
+  t.innerHTML=`<thead><tr><th>Bike</th><th>Status</th><th>Purchased</th>
+    <th class="num">Cost</th><th class="num">Income</th><th class="num">Expenses*</th>
+    <th class="num">Net profit</th><th class="num">Actions</th></tr></thead><tbody>${rows}</tbody>`;
+  t.insertAdjacentHTML("afterend","");
+}
+function actionBtns(edit,del){
+  return `<button class="btn small ghost" onclick="event.stopPropagation();${edit}">Edit</button>
+          <button class="btn small danger" onclick="event.stopPropagation();${del}">Del</button>`;
+}
+function emptyRow(icon,title,hint){
+  return `<tbody><tr><td><div class="empty"><div class="big">${icon}</div>
+    <div><b>${title}</b></div><div class="hint">${hint}</div></div></td></tr></tbody>`;
+}
+
+function showBikeDetail(id){
+  const b=bikeById(id); if(!b) return;
+  const f=bikeFinance(id);
+  const rentals=db.rentals.filter(r=>r.bikeId===id);
+  const inc=db.income.filter(e=>e.bikeId===id);
+  const exp=db.expenses.filter(e=>e.bikeId===id);
+
+  let html=`
+    <div class="mini-stats">
+      <div>Total income<b class="pos">${money(f.income)}</b></div>
+      <div>Total expenses*<b class="neg">${money(f.expenses)}</b></div>
+      <div>Net profit<b class="${clsAmt(f.net)}">${money(f.net)}</b></div>
+    </div>
+    <p class="hint">*Expenses include maintenance and the bike's purchase cost (${money(f.purchase)}).</p>
+    <div class="field"><label>Details</label>
+      <div>Model: ${esc(b.model||"—")} · Serial: ${esc(b.serial||"—")} · Status: ${esc(b.status)}</div>
+      ${b.notes?`<div class="hint">${esc(b.notes)}</div>`:""}</div>`;
+
+  html+=`<div class="detail-section"><h3>Rentals (${rentals.length})</h3>`+
+    (rentals.length?tableMini(["Tenant","Start","End","Rate"],rentals.map(r=>
+      [esc(tenantName(r.tenantId)),fmtDate(r.start),r.end?fmtDate(r.end):"<span class='badge active'>ongoing</span>",
+       money(r.rate)+"/"+r.period])):`<p class="hint">No rentals.</p>`)+`</div>`;
+
+  html+=`<div class="detail-section"><h3>Income (${inc.length})</h3>`+
+    (inc.length?tableMini(["Date","Category","Amount"],inc.map(e=>
+      [fmtDate(e.date),esc(e.category),`<span class="pos">${money(e.amount)}</span>`])):`<p class="hint">No income.</p>`)+`</div>`;
+
+  html+=`<div class="detail-section"><h3>Expenses (${exp.length})</h3>`+
+    (exp.length?tableMini(["Date","Category","Amount"],exp.map(e=>
+      [fmtDate(e.date),esc(e.category),`<span class="neg">${money(e.amount)}</span>`])):`<p class="hint">No expenses.</p>`)+`</div>`;
+
+  openModal("🚲 "+b.name, html, [{label:"Close",cls:"btn",fn:closeModal}]);
+}
+function tableMini(heads,rows){
+  return `<div class="table-scroll"><table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td${i>=heads.length-1?' class="num"':''}>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function openBikeModal(id){
+  const b = id?bikeById(id):{};
+  const body=`
+    <div class="field" data-req><label>Name / label *</label>
+      <input id="f_name" value="${esc(b.name||"")}" placeholder="Bike #3 — Blue Xiaomi"><div class="err">Required</div></div>
+    <div class="row2">
+      <div class="field"><label>Model</label><input id="f_model" value="${esc(b.model||"")}"></div>
+      <div class="field"><label>Serial / frame no.</label><input id="f_serial" value="${esc(b.serial||"")}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Purchase date</label><input type="date" id="f_pdate" value="${esc(b.purchaseDate||todayISO())}"></div>
+      <div class="field" data-min0><label>Purchase cost (€)</label>
+        <input type="number" step="0.01" min="0" id="f_pcost" value="${b.purchaseCost??0}"><div class="err">Must be ≥ 0</div></div>
+    </div>
+    <div class="field"><label>Status</label><select id="f_status">${opts(BIKE_STATUSES,b.status)}</select></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(b.notes||"")}</textarea></div>`;
+  openModal(id?"Edit bike":"Add bike", body, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Save",cls:"btn primary",fn:()=>saveBike(id)}
+  ]);
+}
+function saveBike(id){
+  if(!validate()) return;
+  const rec={
+    id:id||uid(),
+    name:$("f_name").value.trim(),
+    model:$("f_model").value.trim(),
+    serial:$("f_serial").value.trim(),
+    purchaseDate:$("f_pdate").value,
+    purchaseCost:num($("f_pcost").value),
+    status:$("f_status").value,
+    notes:$("f_notes").value.trim(),
+  };
+  if(id){ const i=db.bikes.findIndex(b=>b.id===id); db.bikes[i]=rec; }
+  else db.bikes.push(rec);
+  save(); closeModal(); renderBikes(); toast("Bike saved");
+}
+function delBike(id){
+  const links=db.rentals.filter(r=>r.bikeId===id).length+db.income.filter(e=>e.bikeId===id).length+db.expenses.filter(e=>e.bikeId===id).length;
+  confirmDialog(`Delete this bike?${links?` It is linked to ${links} record(s) — those links will be cleared.`:""}`,()=>{
+    db.bikes=db.bikes.filter(b=>b.id!==id);
+    // clear dangling links
+    db.rentals.forEach(r=>{if(r.bikeId===id)r.bikeId=""});
+    db.income.forEach(e=>{if(e.bikeId===id)e.bikeId=""});
+    db.expenses.forEach(e=>{if(e.bikeId===id)e.bikeId=""});
+    save(); renderBikes(); toast("Bike deleted");
+  });
+}
+
+/* ============================================================================
+   TENANTS TAB
+   ============================================================================ */
+function renderTenants(){
+  const t=$("tenantTable");
+  if(!db.tenants.length){ t.innerHTML=emptyRow("👤","No tenants yet.","Click “+ Add tenant” to add a renter."); return; }
+  let rows=db.tenants.map(tn=>{
+    const f=tenantFinance(tn.id);
+    return `<tr class="clickable" onclick="showTenantDetail('${tn.id}')">
+      <td><b>${esc(tn.name)}</b>${tn.active?"":' <span class="badge retired">inactive</span>'}<div class="hint">${esc(tn.phone||"")}</div></td>
+      <td>${tenantBikesCell(tn.id)}</td>
+      <td>${esc(tn.email||"—")}</td>
+      <td>${esc(tn.idref||"—")}</td>
+      <td class="num pos">${money(f.income)}</td>
+      <td class="num neg">${money(f.expenses)}</td>
+      <td class="num ${clsAmt(f.net)}"><b>${money(f.net)}</b></td>
+      <td class="num">${actionBtns(`openTenantModal('${tn.id}')`,`delTenant('${tn.id}')`)}</td>
+    </tr>`;
+  }).join("");
+  t.innerHTML=`<thead><tr><th>Name</th><th>Bike(s) rented</th><th>Email</th><th>ID/Passport</th>
+    <th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th>
+    <th class="num">Actions</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+// Which bike(s) is this tenant renting? Active (ongoing) rentals shown as blue
+// badges; if none ongoing, show the most recent past bike in muted text.
+function tenantBikesCell(tenantId){
+  const rentals=db.rentals.filter(r=>r.tenantId===tenantId);
+  const active=rentals.filter(r=>!r.end);
+  if(active.length){
+    return active.map(r=>`<span class="badge rented">${esc(bikeName(r.bikeId))}</span>`).join(" ");
+  }
+  if(rentals.length){
+    const last=rentals.slice().sort((a,b)=>(b.start||"").localeCompare(a.start||""))[0];
+    return `<span class="hint">${esc(bikeName(last.bikeId))} (ended)</span>`;
+  }
+  return `<span class="hint">—</span>`;
+}
+
+function showTenantDetail(id){
+  const tn=tenantById(id); if(!tn) return;
+  const f=tenantFinance(id);
+  const rentals=db.rentals.filter(r=>r.tenantId===id);
+  const inc=db.income.filter(e=>e.tenantId===id);
+  let html=`
+    <div class="mini-stats">
+      <div>Income received<b class="pos">${money(f.income)}</b></div>
+      <div>Expenses<b class="neg">${money(f.expenses)}</b></div>
+      <div>Net<b class="${clsAmt(f.net)}">${money(f.net)}</b></div>
+    </div>
+    <div class="field"><label>Contact</label>
+      <div>${esc(tn.phone||"—")} · ${esc(tn.email||"—")} · ID: ${esc(tn.idref||"—")}</div>
+      ${tn.notes?`<div class="hint">${esc(tn.notes)}</div>`:""}</div>
+    <div class="detail-section"><h3>Rental history (${rentals.length})</h3>`+
+    (rentals.length?tableMini(["Bike","Start","End","Rate"],rentals.map(r=>
+      [esc(bikeName(r.bikeId)),fmtDate(r.start),r.end?fmtDate(r.end):"<span class='badge active'>ongoing</span>",
+       money(r.rate)+"/"+r.period])):`<p class="hint">No rentals.</p>`)+`</div>
+    <div class="detail-section"><h3>Payments (${inc.length})</h3>`+
+    (inc.length?tableMini(["Date","Category","Amount"],inc.map(e=>
+      [fmtDate(e.date),esc(e.category),`<span class="pos">${money(e.amount)}</span>`])):`<p class="hint">No payments.</p>`)+`</div>`;
+  openModal("👤 "+tn.name, html, [{label:"Close",cls:"btn",fn:closeModal}]);
+}
+
+function openTenantModal(id){
+  const tn=id?tenantById(id):{active:true};
+  const body=`
+    <div class="field" data-req><label>Full name *</label>
+      <input id="f_name" value="${esc(tn.name||"")}"><div class="err">Required</div></div>
+    <div class="row2">
+      <div class="field"><label>Phone</label><input id="f_phone" value="${esc(tn.phone||"")}"></div>
+      <div class="field"><label>Email</label><input type="email" id="f_email" value="${esc(tn.email||"")}"></div>
+    </div>
+    <div class="field"><label>ID / Passport ref</label><input id="f_idref" value="${esc(tn.idref||"")}"></div>
+    <div class="field"><label><input type="checkbox" id="f_active" ${tn.active!==false?"checked":""} style="width:auto"> Active</label></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(tn.notes||"")}</textarea></div>`;
+  openModal(id?"Edit tenant":"Add tenant", body, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Save",cls:"btn primary",fn:()=>saveTenant(id)}
+  ]);
+}
+function saveTenant(id){
+  if(!validate()) return;
+  const rec={
+    id:id||uid(),
+    name:$("f_name").value.trim(),
+    phone:$("f_phone").value.trim(),
+    email:$("f_email").value.trim(),
+    idref:$("f_idref").value.trim(),
+    active:$("f_active").checked,
+    notes:$("f_notes").value.trim(),
+  };
+  if(id){const i=db.tenants.findIndex(t=>t.id===id);db.tenants[i]=rec;}
+  else db.tenants.push(rec);
+  save(); closeModal(); renderTenants(); toast("Tenant saved");
+}
+function delTenant(id){
+  const links=db.rentals.filter(r=>r.tenantId===id).length+db.income.filter(e=>e.tenantId===id).length;
+  confirmDialog(`Delete this tenant?${links?` Linked to ${links} record(s) — links will be cleared.`:""}`,()=>{
+    db.tenants=db.tenants.filter(t=>t.id!==id);
+    db.rentals.forEach(r=>{if(r.tenantId===id)r.tenantId=""});
+    db.income.forEach(e=>{if(e.tenantId===id)e.tenantId=""});
+    save(); renderTenants(); toast("Tenant deleted");
+  });
+}
+
+/* ============================================================================
+   RENTALS TAB
+   ============================================================================ */
+function renderRentals(){
+  const active=db.rentals.filter(r=>!r.end);
+  const ended=db.rentals.filter(r=>r.end);
+  $("rentalActiveTable").innerHTML = active.length?rentalRows(active,true):"";
+  if(!active.length) $("rentalActiveTable").innerHTML=emptyRow("📅","No active rentals.","Click “+ New rental” to start one.");
+  $("rentalEndedTable").innerHTML = ended.length?rentalRows(ended,false):emptyRow("📦","No ended rentals yet.","Ended rentals will appear here.");
+}
+function rentalRows(list,isActive){
+  const rows=list.map(r=>`<tr>
+    <td><b>${esc(bikeName(r.bikeId))}</b></td>
+    <td>${esc(tenantName(r.tenantId))}</td>
+    <td>${fmtDate(r.start)}</td>
+    <td>${r.end?fmtDate(r.end):'<span class="badge active">ongoing</span>'}</td>
+    <td class="num">${money(r.rate)}/${esc(r.period)}</td>
+    <td class="num">${money(r.deposit)}</td>
+    <td class="num">
+      ${isActive?`<button class="btn small" onclick="endRental('${r.id}')">End</button> `:""}
+      <button class="btn small ghost" onclick="openRentalModal('${r.id}')">Edit</button>
+      <button class="btn small danger" onclick="delRental('${r.id}')">Del</button>
+    </td></tr>`).join("");
+  return `<thead><tr><th>Bike</th><th>Tenant</th><th>Start</th><th>End</th>
+    <th class="num">Rate</th><th class="num">Deposit</th><th class="num">Actions</th></tr></thead><tbody>${rows}</tbody>`;
+}
+function openRentalModal(id){
+  if(!db.bikes.length||!db.tenants.length){
+    toast("Add at least one bike and one tenant first","err"); return;
+  }
+  const r=id?db.rentals.find(x=>x.id===id):{period:"Weekly",start:todayISO()};
+  const body=`
+    <div class="row2">
+      <div class="field" data-req><label>Bike *</label><select id="f_bike">${opts(db.bikes.map(b=>[b.id,b.name]),r.bikeId)}</select><div class="err">Required</div></div>
+      <div class="field" data-req><label>Tenant *</label><select id="f_tenant">${opts(db.tenants.map(t=>[t.id,t.name]),r.tenantId)}</select><div class="err">Required</div></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Start date</label><input type="date" id="f_start" value="${esc(r.start||todayISO())}"></div>
+      <div class="field"><label>End date (blank = ongoing)</label><input type="date" id="f_end" value="${esc(r.end||"")}"></div>
+    </div>
+    <div class="row2">
+      <div class="field" data-min0><label>Rate amount (€)</label><input type="number" step="0.01" min="0" id="f_rate" value="${r.rate??0}"><div class="err">Must be ≥ 0</div></div>
+      <div class="field"><label>Rate period</label><select id="f_period">${opts(RATE_PERIODS,r.period)}</select></div>
+    </div>
+    <div class="field" data-min0><label>Deposit (€)</label><input type="number" step="0.01" min="0" id="f_deposit" value="${r.deposit??0}"><div class="err">Must be ≥ 0</div></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(r.notes||"")}</textarea></div>`;
+  openModal(id?"Edit rental":"New rental", body, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Save",cls:"btn primary",fn:()=>saveRental(id)}
+  ]);
+}
+function saveRental(id){
+  if(!validate()) return;
+  const end=$("f_end").value, start=$("f_start").value;
+  if(end && start && end<start){ toast("End date can't be before start date","err"); return; }
+  const rec={
+    id:id||uid(),
+    bikeId:$("f_bike").value,
+    tenantId:$("f_tenant").value,
+    start, end,
+    rate:num($("f_rate").value),
+    period:$("f_period").value,
+    deposit:num($("f_deposit").value),
+    notes:$("f_notes").value.trim(),
+  };
+  if(id){const i=db.rentals.findIndex(r=>r.id===id);db.rentals[i]=rec;}
+  else db.rentals.push(rec);
+  // if rental is ongoing, mark bike as Rented; if ended, free it
+  const bk=bikeById(rec.bikeId);
+  if(bk && bk.status!=="Retired" && bk.status!=="In maintenance"){
+    bk.status = rec.end ? "Available" : "Rented";
+  }
+  save(); closeModal(); renderRentals(); toast("Rental saved");
+}
+function endRental(id){
+  const r=db.rentals.find(x=>x.id===id); if(!r) return;
+  confirmDialog("End this rental now? The bike will be set to Available.",()=>{
+    r.end=todayISO();
+    const bk=bikeById(r.bikeId);
+    if(bk && bk.status==="Rented") bk.status="Available";
+    save(); renderRentals(); toast("Rental ended");
+  });
+}
+function delRental(id){
+  confirmDialog("Delete this rental record?",()=>{
+    db.rentals=db.rentals.filter(r=>r.id!==id);
+    save(); renderRentals(); toast("Rental deleted");
+  });
+}
+
+/* ============================================================================
+   INCOME TAB
+   ============================================================================ */
+function buildFilterDropdowns(){
+  // bikes / tenants / categories into the filter selects (keep current value)
+  fillSelect("incBike",[["","All bikes"],...db.bikes.map(b=>[b.id,b.name])]);
+  fillSelect("incTenant",[["","All tenants"],...db.tenants.map(t=>[t.id,t.name])]);
+  fillSelect("incCat",[["","All categories"],...INCOME_CATEGORIES.map(c=>[c,c])]);
+  fillSelect("expBike",[["","All bikes"],...db.bikes.map(b=>[b.id,b.name])]);
+  fillSelect("expCat",[["","All categories"],...EXPENSE_CATEGORIES.map(c=>[c,c])]);
+}
+function fillSelect(id,pairs){
+  const el=$(id); if(!el) return; const cur=el.value;
+  el.innerHTML=pairs.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  el.value=cur;
+}
+function clearIncomeFilters(){["incFrom","incTo","incBike","incTenant","incCat"].forEach(i=>$(i).value="");renderIncome();}
+function clearExpenseFilters(){["expFrom","expTo","expBike","expCat"].forEach(i=>$(i).value="");renderExpenses();}
+
+function renderIncome(){
+  const from=$("incFrom").value,to=$("incTo").value,bk=$("incBike").value,tn=$("incTenant").value,cat=$("incCat").value;
+  let list=db.income.filter(e=>
+    (!from&&!to || inRange(e.date,from,to)) &&
+    (!bk||e.bikeId===bk) && (!tn||e.tenantId===tn) && (!cat||e.category===cat)
+  ).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const total=list.reduce((s,e)=>s+num(e.amount),0);
+  const t=$("incomeTable");
+  if(!list.length){ t.innerHTML=emptyRow("💶","No income entries.","Add a payment or adjust your filters."); return; }
+  const rows=list.map(e=>`<tr>
+    <td>${fmtDate(e.date)}</td>
+    <td>${esc(e.category)}</td>
+    <td>${esc(bikeName(e.bikeId))}</td>
+    <td>${esc(tenantName(e.tenantId))}</td>
+    <td class="hint">${esc(e.notes||"")}</td>
+    <td class="num pos">${money(e.amount)}</td>
+    <td class="num">${actionBtns(`openIncomeModal('${e.id}')`,`delIncome('${e.id}')`)}</td>
+  </tr>`).join("");
+  t.innerHTML=`<thead><tr><th>Date</th><th>Category</th><th>Bike</th><th>Tenant</th><th>Notes</th>
+    <th class="num">Amount</th><th class="num">Actions</th></tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><th colspan="5" class="num">Running total</th><th class="num pos">${money(total)}</th><th></th></tr></tfoot>`;
+}
+function openIncomeModal(id){
+  const e=id?db.income.find(x=>x.id===id):{date:todayISO(),category:"Rental payment"};
+  const body=`
+    <div class="row2">
+      <div class="field" data-req><label>Date *</label><input type="date" id="f_date" value="${esc(e.date||todayISO())}"><div class="err">Required</div></div>
+      <div class="field" data-min0 data-pos><label>Amount (€) *</label><input type="number" step="0.01" min="0" id="f_amount" value="${e.amount??""}" placeholder="0.00"><div class="err">Enter an amount ≥ 0</div></div>
+    </div>
+    <div class="field"><label>Category</label><select id="f_category">${opts(INCOME_CATEGORIES,e.category)}</select></div>
+    <div class="row2">
+      <div class="field"><label>Bike (optional)</label><select id="f_bike"><option value="">— none —</option>${opts(db.bikes.map(b=>[b.id,b.name]),e.bikeId)}</select></div>
+      <div class="field"><label>Tenant (optional)</label><select id="f_tenant"><option value="">— none —</option>${opts(db.tenants.map(t=>[t.id,t.name]),e.tenantId)}</select></div>
+    </div>
+    <div class="field"><label>Rental (optional)</label><select id="f_rental"><option value="">— none —</option>${opts(db.rentals.map(r=>[r.id,bikeName(r.bikeId)+" · "+tenantName(r.tenantId)+" ("+fmtDate(r.start)+")"]),e.rentalId)}</select></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(e.notes||"")}</textarea></div>`;
+  openModal(id?"Edit income":"Add income", body, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Save",cls:"btn primary",fn:()=>saveIncome(id)}
+  ]);
+}
+function saveIncome(id){
+  if(!validate()) return;
+  const rec={
+    id:id||uid(), date:$("f_date").value, amount:num($("f_amount").value),
+    category:$("f_category").value, bikeId:$("f_bike").value, tenantId:$("f_tenant").value,
+    rentalId:$("f_rental").value, notes:$("f_notes").value.trim(),
+  };
+  if(id){const i=db.income.findIndex(x=>x.id===id);db.income[i]=rec;}
+  else db.income.push(rec);
+  save(); closeModal(); renderIncome(); toast("Income saved");
+}
+function delIncome(id){
+  confirmDialog("Delete this income entry?",()=>{db.income=db.income.filter(e=>e.id!==id);save();renderIncome();toast("Deleted");});
+}
+
+/* ============================================================================
+   EXPENSES TAB
+   ============================================================================ */
+function renderExpenses(){
+  const from=$("expFrom").value,to=$("expTo").value,bk=$("expBike").value,cat=$("expCat").value;
+  let list=db.expenses.filter(e=>
+    (!from&&!to || inRange(e.date,from,to)) &&
+    (!bk||e.bikeId===bk) && (!cat||e.category===cat)
+  ).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const total=list.reduce((s,e)=>s+num(e.amount),0);
+  const t=$("expenseTable");
+  if(!list.length){ t.innerHTML=emptyRow("🧾","No expense entries.","Add an expense (incl. maintenance) or adjust filters."); return; }
+  const rows=list.map(e=>`<tr>
+    <td>${fmtDate(e.date)}</td>
+    <td>${esc(e.category)}</td>
+    <td>${esc(bikeName(e.bikeId))}</td>
+    <td class="hint">${esc(e.notes||"")}</td>
+    <td class="num neg">${money(e.amount)}</td>
+    <td class="num">${actionBtns(`openExpenseModal('${e.id}')`,`delExpense('${e.id}')`)}</td>
+  </tr>`).join("");
+  t.innerHTML=`<thead><tr><th>Date</th><th>Category</th><th>Bike</th><th>Notes</th>
+    <th class="num">Amount</th><th class="num">Actions</th></tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><th colspan="4" class="num">Running total</th><th class="num neg">${money(total)}</th><th></th></tr></tfoot>`;
+}
+function openExpenseModal(id){
+  const e=id?db.expenses.find(x=>x.id===id):{date:todayISO(),category:"Maintenance"};
+  const body=`
+    <div class="row2">
+      <div class="field" data-req><label>Date *</label><input type="date" id="f_date" value="${esc(e.date||todayISO())}"><div class="err">Required</div></div>
+      <div class="field" data-min0 data-pos><label>Amount (€) *</label><input type="number" step="0.01" min="0" id="f_amount" value="${e.amount??""}" placeholder="0.00"><div class="err">Enter an amount ≥ 0</div></div>
+    </div>
+    <div class="field"><label>Category</label><select id="f_category">${opts(EXPENSE_CATEGORIES,e.category)}</select></div>
+    <div class="field"><label>Bike (optional)</label><select id="f_bike"><option value="">— none —</option>${opts(db.bikes.map(b=>[b.id,b.name]),e.bikeId)}</select></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes">${esc(e.notes||"")}</textarea></div>`;
+  openModal(id?"Edit expense":"Add expense", body, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Save",cls:"btn primary",fn:()=>saveExpense(id)}
+  ]);
+}
+function saveExpense(id){
+  if(!validate()) return;
+  const rec={
+    id:id||uid(), date:$("f_date").value, amount:num($("f_amount").value),
+    category:$("f_category").value, bikeId:$("f_bike").value, notes:$("f_notes").value.trim(),
+  };
+  if(id){const i=db.expenses.findIndex(x=>x.id===id);db.expenses[i]=rec;}
+  else db.expenses.push(rec);
+  save(); closeModal(); renderExpenses(); toast("Expense saved");
+}
+function delExpense(id){
+  confirmDialog("Delete this expense entry?",()=>{db.expenses=db.expenses.filter(e=>e.id!==id);save();renderExpenses();toast("Deleted");});
+}
+
+/* ============================================================================
+   REPORTS TAB
+   ============================================================================ */
+function renderReports(){
+  const m=$("repMonth").value, y=$("repYear").value;
+  const pf = iso => matchPeriod(iso,m,y);
+
+  const inc=totalIncome(e=>pf(e.date));
+  const exp=totalExpenses(e=>pf(e.date));
+  const net=inc-exp;
+  const label = (m?MONTH_NAMES[m-1]+" ":"")+(y||"All time");
+  $("repStats").innerHTML=`
+    ${statCard("Period",label)}
+    ${statCard("Income",money(inc),"pos")}
+    ${statCard("Expenses",money(exp),"neg")}
+    ${statCard("Profit / Loss",money(net),net>=0?"pos":"neg")}`;
+
+  // ---- per bike ----
+  const bt=$("repBikeTable");
+  if(!db.bikes.length){ bt.innerHTML=emptyRow("🚲","No bikes.",""); }
+  else{
+    const rows=db.bikes.map(b=>{const f=bikeFinance(b.id,pf);
+      return `<tr><td>${esc(b.name)}</td><td class="num pos">${money(f.income)}</td>
+        <td class="num neg">${money(f.expenses)}</td><td class="num ${clsAmt(f.net)}"><b>${money(f.net)}</b></td></tr>`;}).join("");
+    bt.innerHTML=`<thead><tr><th>Bike</th><th class="num">Income</th><th class="num">Expenses*</th><th class="num">Net</th></tr></thead><tbody>${rows}</tbody>`;
+  }
+
+  // ---- per tenant ----
+  const tt=$("repTenantTable");
+  if(!db.tenants.length){ tt.innerHTML=emptyRow("👤","No tenants.",""); }
+  else{
+    const rows=db.tenants.map(t=>{const f=tenantFinance(t.id,pf);
+      return `<tr><td>${esc(t.name)}</td><td class="num pos">${money(f.income)}</td>
+        <td class="num neg">${money(f.expenses)}</td><td class="num ${clsAmt(f.net)}"><b>${money(f.net)}</b></td></tr>`;}).join("");
+    tt.innerHTML=`<thead><tr><th>Tenant</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th></tr></thead><tbody>${rows}</tbody>`;
+  }
+
+  // ---- monthly P&L for the selected year (or all years combined) ----
+  const yFilter=e=>(!y||yearOf(e.date)===Number(y));
+  const mt=$("repMonthlyTable");
+  const rows=MONTH_NAMES.map((mn,i)=>{
+    const mm=i+1;
+    const mi=db.income.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0);
+    const me=db.expenses.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0);
+    const mn2=mi-me;
+    if(mi===0&&me===0) return "";
+    return `<tr><td>${mn}</td><td class="num pos">${money(mi)}</td><td class="num neg">${money(me)}</td><td class="num ${clsAmt(mn2)}">${money(mn2)}</td></tr>`;
+  }).join("");
+  mt.innerHTML=rows
+    ? `<thead><tr><th>Month</th><th class="num">Income</th><th class="num">Expenses</th><th class="num">Net</th></tr></thead><tbody>${rows}</tbody>`
+    : emptyRow("📑","No data for this period.","Try clearing the filter.");
+}
+
+/* ---- CSV export for report tables ---- */
+function exportReportCSV(which){
+  const m=$("repMonth").value, y=$("repYear").value;
+  const pf = iso => matchPeriod(iso,m,y);
+  const period=(m?MONTH_NAMES[m-1]+"_":"")+(y||"all");
+  let rows=[], name="";
+  if(which==="bike"){
+    name="profit_per_bike";
+    rows.push(["Bike","Income","Expenses (incl. purchase)","Net"]);
+    db.bikes.forEach(b=>{const f=bikeFinance(b.id,pf);rows.push([b.name,f.income,f.expenses,f.net]);});
+  }else if(which==="tenant"){
+    name="profit_per_tenant";
+    rows.push(["Tenant","Income","Expenses","Net"]);
+    db.tenants.forEach(t=>{const f=tenantFinance(t.id,pf);rows.push([t.name,f.income,f.expenses,f.net]);});
+  }else{ // monthly
+    name="monthly_pl";
+    rows.push(["Month","Income","Expenses","Net"]);
+    const yFilter=e=>(!y||yearOf(e.date)===Number(y));
+    MONTH_NAMES.forEach((mn,i)=>{const mm=i+1;
+      const mi=db.income.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0);
+      const me=db.expenses.filter(e=>yFilter(e)&&monthOf(e.date)===mm).reduce((s,e)=>s+num(e.amount),0);
+      rows.push([mn,mi,me,mi-me]);
+    });
+  }
+  downloadCSV(rows, `${name}_${period}.csv`);
+}
+function downloadCSV(rows,filename){
+  const csv=rows.map(r=>r.map(c=>{
+    const s=String(c); return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
+  }).join(",")).join("\r\n");
+  const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"}); // BOM for Excel
+  triggerDownload(blob,filename);
+  toast("CSV exported");
+}
+
+/* ============================================================================
+   MODAL + VALIDATION
+   ============================================================================ */
+function openModal(title,bodyHTML,buttons){
+  $("modalTitle").textContent=title;
+  $("modalBody").innerHTML=bodyHTML;
+  $("modalFoot").innerHTML="";
+  (buttons||[]).forEach(b=>{
+    const btn=document.createElement("button");
+    btn.className=b.cls; btn.textContent=b.label; btn.onclick=b.fn;
+    $("modalFoot").appendChild(btn);
+  });
+  $("modalBack").classList.add("show");
+}
+function closeModal(){ $("modalBack").classList.remove("show"); }
+// close on backdrop click
+$("modalBack").addEventListener("mousedown",e=>{ if(e.target===$("modalBack")) closeModal(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
+
+// Validation: required fields ([data-req]) must be non-empty; [data-min0] numbers ≥0; [data-pos] must be present.
+function validate(){
+  let ok=true;
+  document.querySelectorAll("#modalBody .field").forEach(f=>{
+    f.classList.remove("invalid");
+    const input=f.querySelector("input,select,textarea");
+    if(!input) return;
+    if(f.hasAttribute("data-req") && !String(input.value).trim()){ f.classList.add("invalid"); ok=false; }
+    if(f.hasAttribute("data-min0") && input.value!=="" && num(input.value)<0){ f.classList.add("invalid"); ok=false; }
+    if(f.hasAttribute("data-pos") && String(input.value).trim()===""){ f.classList.add("invalid"); ok=false; }
+  });
+  if(!ok) toast("Please fix the highlighted fields","err");
+  return ok;
+}
+
+// simple confirm dialog using the modal
+function confirmDialog(message,onYes){
+  openModal("Please confirm", `<p>${esc(message)}</p>`, [
+    {label:"Cancel",cls:"btn ghost",fn:closeModal},
+    {label:"Yes, do it",cls:"btn danger",fn:()=>{closeModal();onYes();}}
+  ]);
+}
+
+// build <option> html. items can be array of strings or array of [value,label]
+function opts(items,selected){
+  return items.map(it=>{
+    const [v,l]=Array.isArray(it)?it:[it,it];
+    return `<option value="${esc(v)}" ${v===selected?"selected":""}>${esc(l)}</option>`;
+  }).join("");
+}
+
+/* ============================================================================
+   EXPORT / IMPORT / RESET  (backup mechanism)
+   ============================================================================ */
+function triggerDownload(blob,filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+function exportData(){
+  const blob=new Blob([JSON.stringify(db,null,2)],{type:"application/json"});
+  const stamp=todayISO();
+  triggerDownload(blob,`ebike-backup-${stamp}.json`);
+  toast("Backup exported");
+}
+function importData(ev){
+  const file=ev.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const data=JSON.parse(reader.result);
+      if(typeof data!=="object"||data===null) throw new Error("Not an object");
+      confirmDialog("Import this backup? It will REPLACE all current data.",()=>{
+        db=data; normalizeDb(); save();
+        initSelectors(); renderAll();
+        toast("Backup imported");
+      });
+    }catch(e){ toast("Import failed: invalid JSON file","err"); }
+    ev.target.value=""; // allow re-importing same file
+  };
+  reader.readAsText(file);
+}
+function resetData(){
+  confirmDialog("Clear ALL data and restore the sample data? This cannot be undone (export a backup first if unsure).",()=>{
+    db=seedData(); save(); initSelectors(); renderAll(); toast("Data reset to sample");
+  });
+}
+
+/* ============================================================================
+   INIT
+   ============================================================================ */
+function initSelectors(){
+  // month dropdowns (dashboard + reports)
+  const monthOpts=`<option value="">All months</option>`+MONTH_NAMES.map((n,i)=>`<option value="${i+1}">${n}</option>`).join("");
+  ["dashMonth","repMonth"].forEach(id=>{const cur=$(id).value;$(id).innerHTML=monthOpts;$(id).value=cur;});
+
+  // year dropdowns — gather years present in data + current year
+  const years=new Set([yearOf(todayISO())]);
+  [...db.income,...db.expenses,...db.rentals].forEach(e=>{
+    const yy=yearOf(e.date||e.start); if(yy) years.add(yy);
+  });
+  db.bikes.forEach(b=>{const yy=yearOf(b.purchaseDate);if(yy)years.add(yy);});
+  const yearList=[...years].sort((a,b)=>b-a);
+  const yearOpts=`<option value="">All years</option>`+yearList.map(y=>`<option value="${y}">${y}</option>`).join("");
+  ["dashYear","repYear"].forEach(id=>{const cur=$(id).value;$(id).innerHTML=yearOpts;$(id).value=cur;});
+
+  buildFilterDropdowns();
+}
+function renderAll(){
+  initSelectors();
+  renderDashboard(); renderBikes(); renderTenants();
+  renderRentals(); renderIncome(); renderExpenses(); renderReports();
+}
+
+// boot
+load();
+initSelectors();
+renderDashboard();
+if(!hasCharts) $("noChartNote").style.display="block";
+</script>
+</body>
+</html>
